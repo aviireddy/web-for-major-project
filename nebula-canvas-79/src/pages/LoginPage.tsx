@@ -221,12 +221,6 @@ const LoginPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Demo Info */}
-            <div className="mt-6 p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
-              <p className="text-xs text-gray-300">
-                <strong>Demo:</strong> Use any email and password to proceed
-              </p>
-            </div>
           </div>
         </Card>
       </div>
