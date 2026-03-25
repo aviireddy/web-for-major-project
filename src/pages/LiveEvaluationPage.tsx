@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/UserContext';
+import { useEvaluation } from '@/context/EvaluationContext';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas';
-import { getResult, getStatus } from '@/lib/api';
+import { getResult, getStatus, checkResultsExist } from '@/lib/api';
 import {
   ComposedChart,
   BarChart,
@@ -47,6 +48,7 @@ const LiveEvaluationPage: React.FC = () => {
   const { jobId } = useParams();
   const navigate = useNavigate();
   const { user } = useUser();
+  const { config } = useEvaluation();
   const chartRef = useRef<HTMLDivElement>(null);
 
   const [status, setStatus] = useState<'running' | 'completed' | 'failed'>('running');
@@ -56,11 +58,17 @@ const LiveEvaluationPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const expName = localStorage.getItem('currentExpName') || 'evaluation';
+  const resultsDir = localStorage.getItem('resultsDir') || `./experiments/${user?.userId || 'user1'}/${expName}`;
+
+  // Long timeout - 24 hours in milliseconds
+  const EVALUATION_TIMEOUT = 24 * 60 * 60 * 1000;
+  const POLL_INTERVAL = 3000; // 3 seconds
 
   // Polling hook
   useEffect(() => {
     let pollInterval: NodeJS.Timeout | null = null;
     let elapsedInterval: NodeJS.Timeout | null = null;
+    let timeoutHandle: NodeJS.Timeout | null = null;
 
     const poll = async () => {
       try {
@@ -71,6 +79,28 @@ const LiveEvaluationPage: React.FC = () => {
           return;
         }
 
+        // Check if results file exists at the path
+        try {
+          const fileCheckResult = await checkResultsExist(resultsDir);
+          if (fileCheckResult.exists) {
+            // File exists, get the results
+            const resultData = await getResult(jobId);
+            if (resultData.status === 'completed') {
+              setMetrics(resultData.metrics as Metrics);
+              setStatus('completed');
+              setLoading(false);
+              if (pollInterval) clearInterval(pollInterval);
+              if (elapsedInterval) clearInterval(elapsedInterval);
+              if (timeoutHandle) clearTimeout(timeoutHandle);
+              toast.success('Evaluation completed!');
+              return;
+            }
+          }
+        } catch (err) {
+          console.log('File check not available, using status polling');
+        }
+
+        // Fallback: Use status polling
         const statusData = await getStatus(jobId);
         setStatus(statusData.status);
 
@@ -78,13 +108,17 @@ const LiveEvaluationPage: React.FC = () => {
           const resultData = await getResult(jobId);
           if (resultData.status === 'completed') {
             setMetrics(resultData.metrics as Metrics);
+            setLoading(false);
+            toast.success('Evaluation completed!');
           } else if (resultData.status === 'failed') {
             setError(resultData.error || 'Evaluation failed.');
             setStatus('failed');
+            setLoading(false);
+            toast.error('Evaluation failed!');
           }
-          setLoading(false);
           if (pollInterval) clearInterval(pollInterval);
           if (elapsedInterval) clearInterval(elapsedInterval);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
           return;
         }
 
@@ -98,8 +132,11 @@ const LiveEvaluationPage: React.FC = () => {
           setLoading(false);
           if (pollInterval) clearInterval(pollInterval);
           if (elapsedInterval) clearInterval(elapsedInterval);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          toast.error('Evaluation failed!');
         }
       } catch (err) {
+        console.error('Poll error:', err);
         setStatus('failed');
         setError(err instanceof Error ? err.message : 'Failed to fetch status');
         setLoading(false);
@@ -107,16 +144,25 @@ const LiveEvaluationPage: React.FC = () => {
     };
 
     poll();
-    pollInterval = setInterval(poll, 3000);
+    pollInterval = setInterval(poll, POLL_INTERVAL);
     elapsedInterval = setInterval(() => {
       setElapsed((prev) => prev + 1);
     }, 1000);
 
+    // Set timeout for extremely long evaluation
+    timeoutHandle = setTimeout(() => {
+      setError(`Evaluation timeout after ${Math.floor(EVALUATION_TIMEOUT / 1000 / 60 / 60)} hours`);
+      setLoading(false);
+      if (pollInterval) clearInterval(pollInterval);
+      if (elapsedInterval) clearInterval(elapsedInterval);
+    }, EVALUATION_TIMEOUT);
+
     return () => {
       if (pollInterval) clearInterval(pollInterval);
       if (elapsedInterval) clearInterval(elapsedInterval);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     };
-  }, [jobId]);
+  }, [jobId, resultsDir]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);

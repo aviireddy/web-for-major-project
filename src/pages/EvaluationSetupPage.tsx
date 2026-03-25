@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/UserContext';
+import { useEvaluation } from '@/context/EvaluationContext';
 import { FileUploadZone, FormField, ToggleAttack, ValidationError } from '@/components/FileUploadZone';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { startEvaluation } from '@/lib/api';
-import { Play, AlertCircle, FolderOpen, Code, Zap } from 'lucide-react';
+import { Play, AlertCircle, FolderOpen, Code, Zap, Settings } from 'lucide-react';
 
 interface Attacks {
   fgsm: boolean;
@@ -19,6 +23,7 @@ interface Attacks {
 const EvaluationSetupPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useUser();
+  const { config, updateConfig } = useEvaluation();
 
   // Get userId from context or localStorage
   const userId = user?.userId || localStorage.getItem('userId') || 'user1';
@@ -31,17 +36,37 @@ const EvaluationSetupPage: React.FC = () => {
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [weightsFile, setWeightsFile] = useState<File | null>(null);
 
-  // Attacks
+  // Dataset configuration
+  const [datasetName, setDatasetName] = useState(config.dataset.name);
+  const [datasetRoot, setDatasetRoot] = useState(config.dataset.root);
+  const [batchSize, setBatchSize] = useState(config.dataset.batch_size.toString());
+  const [numWorkers, setNumWorkers] = useState(config.dataset.num_workers.toString());
+
+  // Model configuration
+  const [architecture, setArchitecture] = useState(config.model.architecture);
+  const [numClasses, setNumClasses] = useState(config.model.num_classes.toString());
+  const [inputH, setInputH] = useState(config.model.input_size[1].toString());
+  const [inputW, setInputW] = useState(config.model.input_size[2].toString());
+
+  // Attack parameters
   const [attacks, setAttacks] = useState<Attacks>({
-    fgsm: true,
-    pgd: false,
-    cw: false,
-    jsma: false,
-    deepfool: false,
+    fgsm: config.attacks.fgsm?.enabled || true,
+    pgd: config.attacks.pgd?.enabled || false,
+    cw: config.attacks.cw?.enabled || false,
+    jsma: config.attacks.jsma?.enabled || false,
+    deepfool: config.attacks.deepfool?.enabled || false,
   });
+
+  const [fgsmEps, setFgsmEps] = useState(config.attacks.fgsm?.eps?.toString() || '0.03');
+  const [pgdEps, setPgdEps] = useState(config.attacks.pgd?.eps?.toString() || '0.03');
+  const [pgdAlpha, setPgdAlpha] = useState(config.attacks.pgd?.alpha?.toString() || '0.007');
+  const [pgdSteps, setPgdSteps] = useState(config.attacks.pgd?.steps?.toString() || '10');
+  const [cwC, setCwC] = useState(config.attacks.cw?.c?.toString() || '0.001');
+  const [cwSteps, setCwSteps] = useState(config.attacks.cw?.steps?.toString() || '200');
 
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const validateForm = (): boolean => {
     const newErrors: string[] = [];
@@ -70,30 +95,53 @@ const EvaluationSetupPage: React.FC = () => {
     }
 
     setLoading(true);
-    console.log('Starting evaluation with attacks:', attacks);
 
     try {
-      console.log('Calling API...');
+      // Update context with current configuration
+      updateConfig({
+        dataset: {
+          name: datasetName,
+          root: datasetRoot,
+          batch_size: parseInt(batchSize),
+          num_workers: parseInt(numWorkers),
+        },
+        model: {
+          architecture,
+          pretrained: true,
+          weights_path: weightsFile?.name || null,
+          num_classes: parseInt(numClasses),
+          input_size: [3, parseInt(inputH), parseInt(inputW)],
+        },
+        attacks: {
+          fgsm: { enabled: attacks.fgsm, eps: parseFloat(fgsmEps) },
+          pgd: { enabled: attacks.pgd, eps: parseFloat(pgdEps), alpha: parseFloat(pgdAlpha), steps: parseInt(pgdSteps) },
+          cw: { enabled: attacks.cw, c: parseFloat(cwC), kappa: 0.0, steps: parseInt(cwSteps), lr: 0.01 },
+          jsma: { enabled: attacks.jsma },
+          deepfool: { enabled: attacks.deepfool },
+        },
+      });
+
+      console.log('Starting evaluation with dynamic config');
       const data = await startEvaluation({
         experiment_name: expName,
         device: 'auto',
         dataset: {
-          name: 'cifar10',
-          root: './data/cifar',
-          batch_size: 32,
-          num_workers: 2,
+          name: datasetName,
+          root: datasetRoot,
+          batch_size: parseInt(batchSize),
+          num_workers: parseInt(numWorkers),
         },
         model: {
-          architecture: 'resnet50',
+          architecture,
           pretrained: true,
-          weights_path: null,
-          num_classes: 10,
-          input_size: [3, 32, 32],
+          weights_path: weightsFile?.name || null,
+          num_classes: parseInt(numClasses),
+          input_size: [3, parseInt(inputH), parseInt(inputW)],
         },
         attacks: {
-          fgsm: { enabled: attacks.fgsm, eps: 0.03 },
-          pgd: { enabled: attacks.pgd, eps: 0.03, alpha: 0.007, steps: 10 },
-          cw: { enabled: attacks.cw, c: 0.001, kappa: 0.0, steps: 200, lr: 0.01 },
+          fgsm: { enabled: attacks.fgsm, eps: parseFloat(fgsmEps) },
+          pgd: { enabled: attacks.pgd, eps: parseFloat(pgdEps), alpha: parseFloat(pgdAlpha), steps: parseInt(pgdSteps) },
+          cw: { enabled: attacks.cw, c: parseFloat(cwC), kappa: 0.0, steps: parseInt(cwSteps), lr: 0.01 },
           jsma: { enabled: attacks.jsma },
           deepfool: { enabled: attacks.deepfool },
         },
@@ -101,13 +149,13 @@ const EvaluationSetupPage: React.FC = () => {
           results_dir: `./experiments/${userId}/${expName}`,
         },
       });
-      
+
       console.log('API Response:', data);
       localStorage.setItem('currentJobId', data.job_id);
       localStorage.setItem('currentExpName', expName);
+      localStorage.setItem('resultsDir', `./experiments/${userId}/${expName}`);
 
       toast.success('Evaluation started!');
-      console.log('Navigating to:', `/live/${data.job_id}`);
       navigate(`/live/${data.job_id}`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to start evaluation';
@@ -155,6 +203,56 @@ const EvaluationSetupPage: React.FC = () => {
               </div>
             </Card>
 
+            {/* Dataset Configuration Section */}
+            <Card className="bg-white/10 backdrop-blur-xl border-white/20">
+              <div className="p-6 space-y-4">
+                <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                  <Settings className="h-6 w-6 text-purple-400" />
+                  Dataset Configuration
+                </h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-gray-300">Dataset Name</Label>
+                    <Input
+                      value={datasetName}
+                      onChange={(e) => setDatasetName(e.target.value)}
+                      placeholder="cifar10"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Dataset Root Path</Label>
+                    <Input
+                      value={datasetRoot}
+                      onChange={(e) => setDatasetRoot(e.target.value)}
+                      placeholder="./data/cifar"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Batch Size</Label>
+                    <Input
+                      type="number"
+                      value={batchSize}
+                      onChange={(e) => setBatchSize(e.target.value)}
+                      placeholder="32"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Number of Workers</Label>
+                    <Input
+                      type="number"
+                      value={numWorkers}
+                      onChange={(e) => setNumWorkers(e.target.value)}
+                      placeholder="2"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            </Card>
+
             {/* Dataset Section */}
             <Card className="bg-white/10 backdrop-blur-xl border-white/20">
               <div className="p-6 space-y-4">
@@ -170,6 +268,57 @@ const EvaluationSetupPage: React.FC = () => {
                     selectedFile={datasetFile}
                     accept=".zip,.csv,.npz,.tar,.tar.gz,image/*"
                   />
+                </div>
+              </div>
+            </Card>
+
+            {/* Model Configuration Section */}
+            <Card className="bg-white/10 backdrop-blur-xl border-white/20">
+              <div className="p-6 space-y-4">
+                <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                  <Settings className="h-6 w-6 text-indigo-400" />
+                  Model Configuration
+                </h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-gray-300">Architecture</Label>
+                    <Input
+                      value={architecture}
+                      onChange={(e) => setArchitecture(e.target.value)}
+                      placeholder="resnet50"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Number of Classes</Label>
+                    <Input
+                      type="number"
+                      value={numClasses}
+                      onChange={(e) => setNumClasses(e.target.value)}
+                      placeholder="10"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Input Height</Label>
+                    <Input
+                      type="number"
+                      value={inputH}
+                      onChange={(e) => setInputH(e.target.value)}
+                      placeholder="32"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Input Width</Label>
+                    <Input
+                      type="number"
+                      value={inputW}
+                      onChange={(e) => setInputW(e.target.value)}
+                      placeholder="32"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
                 </div>
               </div>
             </Card>
@@ -199,6 +348,103 @@ const EvaluationSetupPage: React.FC = () => {
                 </div>
               </div>
             </Card>
+
+            {/* Attack Parameters Section */}
+            <button
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 mb-2"
+            >
+              <Settings className="h-4 w-4" />
+              {showAdvanced ? 'Hide' : 'Show'} Advanced Attack Parameters
+            </button>
+
+            {showAdvanced && (
+              <Card className="bg-white/10 backdrop-blur-xl border-white/20">
+                <div className="p-6 space-y-4">
+                  <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                    <AlertCircle className="h-6 w-6 text-orange-400" />
+                    Attack Parameters
+                  </h2>
+                  <div className="space-y-4">
+                    {attacks.fgsm && (
+                      <div className="border-l-2 border-blue-400 pl-4">
+                        <Label className="text-gray-300">FGSM Epsilon</Label>
+                        <Input
+                          type="number"
+                          step="0.001"
+                          value={fgsmEps}
+                          onChange={(e) => setFgsmEps(e.target.value)}
+                          placeholder="0.03"
+                          className="bg-white/10 border-white/20 text-white mt-1"
+                        />
+                      </div>
+                    )}
+                    {attacks.pgd && (
+                      <div className="border-l-2 border-purple-400 pl-4 space-y-2">
+                        <Label className="text-gray-300">PGD Parameters</Label>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <Label className="text-xs text-gray-400">Epsilon</Label>
+                            <Input
+                              type="number"
+                              step="0.001"
+                              value={pgdEps}
+                              onChange={(e) => setPgdEps(e.target.value)}
+                              className="bg-white/10 border-white/20 text-white text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-gray-400">Alpha</Label>
+                            <Input
+                              type="number"
+                              step="0.001"
+                              value={pgdAlpha}
+                              onChange={(e) => setPgdAlpha(e.target.value)}
+                              className="bg-white/10 border-white/20 text-white text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-gray-400">Steps</Label>
+                            <Input
+                              type="number"
+                              value={pgdSteps}
+                              onChange={(e) => setPgdSteps(e.target.value)}
+                              className="bg-white/10 border-white/20 text-white text-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {attacks.cw && (
+                      <div className="border-l-2 border-pink-400 pl-4 space-y-2">
+                        <Label className="text-gray-300">C&W Parameters</Label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs text-gray-400">C</Label>
+                            <Input
+                              type="number"
+                              step="0.001"
+                              value={cwC}
+                              onChange={(e) => setCwC(e.target.value)}
+                              className="bg-white/10 border-white/20 text-white text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-gray-400">Steps</Label>
+                            <Input
+                              type="number"
+                              value={cwSteps}
+                              onChange={(e) => setCwSteps(e.target.value)}
+                              className="bg-white/10 border-white/20 text-white text-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            )}
 
             {/* Attacks Section */}
             <Card className="bg-white/10 backdrop-blur-xl border-white/20">
