@@ -71,3 +71,11 @@ export function getStatus(jobId: string) {
 export function getResult(jobId: string) {
   return request<ResultResponse>(`/result/${jobId}`);
 }
+
+export function checkResultsExist(resultsDir: string) {
+  return request<{ exists: boolean }>(`/check-results`, {
+    method: "POST",
+    body: JSON.stringify({ results_dir: resultsDir }),
+  });
+}
+}
