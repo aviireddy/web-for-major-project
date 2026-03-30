@@ -78,4 +78,3 @@ export function checkResultsExist(resultsDir: string) {
     body: JSON.stringify({ results_dir: resultsDir }),
   });
 }
-}
